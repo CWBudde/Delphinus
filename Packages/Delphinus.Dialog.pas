@@ -30,8 +30,7 @@ uses
   DN.EnvironmentOptions.Intf,
   ExtCtrls,
   StdCtrls,
-  Registry,
-  System.Actions;
+  Registry;
 
 type
   TDelphinusDialog = class(TForm)
@@ -239,7 +238,7 @@ begin
   FInstalledPackages := TList<IDNPackage>.Create();
   FUpdatePackages := TList<IDNPackage>.Create();
   FFileService := TDNFileService.Create((BorlandIDEServices as IOTAServices).GetBaseRegistryKey);
-  FEnvironmentOptionsService := TDNEnvironmentOptionsService.Create();
+  FEnvironmentOptionsService := TDNIDEEnvironmentOptionsService.Create();
 
   FProgressDialog := TProgressDialog.Create(Self);
   FDetailView := TPackageDetailView.Create(Self);

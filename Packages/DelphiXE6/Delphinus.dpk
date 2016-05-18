@@ -119,7 +119,8 @@ contains
   Delphinus.Resources in '..\Delphinus.Resources.pas',
   Delphinus.About in '..\Delphinus.About.pas' {AboutDialog},
   DN.BPLService.Intf in '..\..\DN.BPLService.Intf.pas',
-  DN.BPLService.ToolsApi in '..\..\DN.BPLService.ToolsApi.pas';
+  DN.BPLService.ToolsApi in '..\..\DN.BPLService.ToolsApi.pas',
+  DN.EnvironmentOptions in '..\..\DN.EnvironmentOptions.pas';
 
 end.
 
