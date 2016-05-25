@@ -1,0 +1,233 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{0990B172-C221-4312-816E-1E634AF7EE2C}</ProjectGuid>
+        <MainSource>Delphinus.dpk</MainSource>
+        <ProjectVersion>16.1</ProjectVersion>
+        <FrameworkType>VCL</FrameworkType>
+        <Base>True</Base>
+        <Config Condition="'$(Config)'==''">Debug</Config>
+        <Platform Condition="'$(Platform)'==''">Win32</Platform>
+        <TargetedPlatforms>1</TargetedPlatforms>
+        <AppType>Package</AppType>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Config)'=='Base' or '$(Base)'!=''">
+        <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="('$(Platform)'=='OSX32' and '$(Base)'=='true') or '$(Base_OSX32)'!=''">
+        <Base_OSX32>true</Base_OSX32>
+        <CfgParent>Base</CfgParent>
+        <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="('$(Platform)'=='Win32' and '$(Base)'=='true') or '$(Base_Win32)'!=''">
+        <Base_Win32>true</Base_Win32>
+        <CfgParent>Base</CfgParent>
+        <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="('$(Platform)'=='Win64' and '$(Base)'=='true') or '$(Base_Win64)'!=''">
+        <Base_Win64>true</Base_Win64>
+        <CfgParent>Base</CfgParent>
+        <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Config)'=='Debug' or '$(Cfg_1)'!=''">
+        <Cfg_1>true</Cfg_1>
+        <CfgParent>Base</CfgParent>
+        <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="('$(Platform)'=='Win32' and '$(Cfg_1)'=='true') or '$(Cfg_1_Win32)'!=''">
+        <Cfg_1_Win32>true</Cfg_1_Win32>
+        <CfgParent>Cfg_1</CfgParent>
+        <Cfg_1>true</Cfg_1>
+        <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Config)'=='Release' or '$(Cfg_2)'!=''">
+        <Cfg_2>true</Cfg_2>
+        <CfgParent>Base</CfgParent>
+        <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Base)'!=''">
+        <DCC_UnitSearchPath>..;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;Vcl;Vcl.Imaging;Vcl.Touch;Vcl.Samples;Vcl.Shell;$(DCC_Namespace)</DCC_Namespace>
+        <GenDll>true</GenDll>
+        <SanitizedProjectName>Delphinus</SanitizedProjectName>
+        <DesignOnlyPackage>true</DesignOnlyPackage>
+        <GenPackage>true</GenPackage>
+        <DllSuffix>XE7</DllSuffix>
+        <DCC_E>false</DCC_E>
+        <DCC_N>false</DCC_N>
+        <DCC_S>false</DCC_S>
+        <DCC_F>false</DCC_F>
+        <DCC_K>false</DCC_K>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Base_OSX32)'!=''">
+        <DCC_UsePackage>rtl;dbrtl;DbxCommonDriver;IndyCore;IndySystem;IndyProtocols;$(DCC_UsePackage)</DCC_UsePackage>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Base_Win32)'!=''">
+        <DCC_UsePackage>rtl;vclimg;dbrtl;DbxCommonDriver;IndyCore;IndySystem;IndyProtocols;vcl;$(DCC_UsePackage)</DCC_UsePackage>
+        <DCC_Namespace>Winapi;System.Win;Data.Win;Datasnap.Win;Web.Win;Soap.Win;Xml.Win;Bde;$(DCC_Namespace)</DCC_Namespace>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Base_Win64)'!=''">
+        <DCC_UsePackage>rtl;vclimg;dbrtl;DbxCommonDriver;IndyCore;IndySystem;IndyProtocols;vcl;$(DCC_UsePackage)</DCC_UsePackage>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Cfg_1)'!=''">
+        <DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>
+        <DCC_DebugDCUs>true</DCC_DebugDCUs>
+        <DCC_Optimize>false</DCC_Optimize>
+        <DCC_GenerateStackFrames>true</DCC_GenerateStackFrames>
+        <DCC_DebugInfoInExe>true</DCC_DebugInfoInExe>
+        <DCC_RemoteDebug>true</DCC_RemoteDebug>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Cfg_1_Win32)'!=''">
+        <Debugger_HostApplication>$(BDS)\bin\bds.exe</Debugger_HostApplication>
+        <DCC_RemoteDebug>false</DCC_RemoteDebug>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Cfg_2)'!=''">
+        <DCC_LocalDebugSymbols>false</DCC_LocalDebugSymbols>
+        <DCC_Define>RELEASE;$(DCC_Define)</DCC_Define>
+        <DCC_SymbolReferenceInfo>0</DCC_SymbolReferenceInfo>
+        <DCC_DebugInformation>0</DCC_DebugInformation>
+    </PropertyGroup>
+    <ItemGroup>
+        <DelphiCompile Include="$(MainSource)">
+            <MainSource>MainSource</MainSource>
+        </DelphiCompile>
+        <DCCReference Include="rtl.dcp"/>
+        <DCCReference Include="DesignIDE.dcp"/>
+        <DCCReference Include="vclimg.dcp"/>
+        <DCCReference Include="dbrtl.dcp"/>
+        <DCCReference Include="vcl.dcp"/>
+        <DCCReference Include="..\Delphinus.About.pas">
+            <Form>AboutDialog</Form>
+        </DCCReference>
+        <DCCReference Include="..\Delphinus.CategoryFilterView.pas">
+            <Form>CategoryFilterView</Form>
+            <DesignClass>TFrame</DesignClass>
+        </DCCReference>
+        <DCCReference Include="..\Delphinus.Controller.pas"/>
+        <DCCReference Include="..\Delphinus.Dialog.pas">
+            <Form>DelphinusDialog</Form>
+        </DCCReference>
+        <DCCReference Include="..\Delphinus.Forms.pas"/>
+        <DCCReference Include="..\Delphinus.LicenseDialog.pas">
+            <Form>LicenseDialog</Form>
+        </DCCReference>
+        <DCCReference Include="..\Delphinus.Main.pas"/>
+        <DCCReference Include="..\Delphinus.OptionsDialog.pas">
+            <Form>DelphinusOptionsDialog</Form>
+        </DCCReference>
+        <DCCReference Include="..\Delphinus.ProgressDialog.pas">
+            <Form>ProgressDialog</Form>
+        </DCCReference>
+        <DCCReference Include="..\Delphinus.Resources.pas"/>
+        <DCCReference Include="..\Delphinus.Resources.Names.pas"/>
+        <DCCReference Include="..\Delphinus.SetupDialog.pas">
+            <Form>SetupDialog</Form>
+        </DCCReference>
+        <DCCReference Include="Delphinus.Theming.pas"/>
+        <DCCReference Include="..\Delphinus.UiTypes.pas"/>
+        <DCCReference Include="..\Delphinus.Version.pas"/>
+        <DCCReference Include="..\..\DN.ActiveX.pas"/>
+        <DCCReference Include="..\..\DN.ComCtrls.Helper.pas"/>
+        <DCCReference Include="..\..\DN.Compiler.pas"/>
+        <DCCReference Include="..\..\DN.Compiler.Intf.pas"/>
+        <DCCReference Include="..\..\DN.Compiler.MSBuild.pas"/>
+        <DCCReference Include="..\..\DN.Controls.pas"/>
+        <DCCReference Include="..\..\DN.Controls.Button.pas"/>
+        <DCCReference Include="..\..\DN.Environment.pas"/>
+        <DCCReference Include="..\..\DN.FileService.pas"/>
+        <DCCReference Include="..\..\DN.FileService.Intf.pas"/>
+        <DCCReference Include="..\..\DN.Graphics.pas"/>
+        <DCCReference Include="..\..\DN.HttpClient.pas"/>
+        <DCCReference Include="..\..\DN.HttpClient.Cache.pas"/>
+        <DCCReference Include="..\..\DN.HttpClient.Cache.Intf.pas"/>
+        <DCCReference Include="..\..\DN.HttpClient.Intf.pas"/>
+        <DCCReference Include="..\..\DN.HttpClient.WinHttp.pas"/>
+        <DCCReference Include="..\..\DN.Import.WinHttp.pas"/>
+        <DCCReference Include="..\..\DN.Installer.pas"/>
+        <DCCReference Include="..\..\DN.Installer.IDE.pas"/>
+        <DCCReference Include="..\..\DN.Installer.Intf.pas"/>
+        <DCCReference Include="..\..\DN.IOUtils.pas"/>
+        <DCCReference Include="..\..\DN.JSon.pas"/>
+        <DCCReference Include="..\..\DN.JSonFile.pas"/>
+        <DCCReference Include="..\..\DN.JSonFile.CacheInfo.pas"/>
+        <DCCReference Include="..\..\DN.JSonFile.Info.pas"/>
+        <DCCReference Include="..\..\DN.JSonFile.Installation.pas"/>
+        <DCCReference Include="..\..\DN.JSonFile.InstalledInfo.pas"/>
+        <DCCReference Include="..\..\DN.JSonFile.Uninstallation.pas"/>
+        <DCCReference Include="..\..\DN.Package.pas"/>
+        <DCCReference Include="..\..\DN.Package.Github.pas"/>
+        <DCCReference Include="..\..\DN.Package.Intf.pas"/>
+        <DCCReference Include="..\..\DN.Package.Version.pas"/>
+        <DCCReference Include="..\..\DN.Package.Version.Intf.pas"/>
+        <DCCReference Include="..\..\DN.PackageDetailView.pas">
+            <Form>PackageDetailView</Form>
+            <DesignClass>TFrame</DesignClass>
+        </DCCReference>
+        <DCCReference Include="..\..\DN.PackageFilter.pas"/>
+        <DCCReference Include="..\..\DN.PackageOverview.pas"/>
+        <DCCReference Include="..\..\DN.PackageProvider.pas"/>
+        <DCCReference Include="..\..\DN.PackageProvider.GitHub.pas"/>
+        <DCCReference Include="..\..\DN.PackageProvider.Installed.pas"/>
+        <DCCReference Include="..\..\DN.PackageProvider.Intf.pas"/>
+        <DCCReference Include="..\..\DN.Preview.pas"/>
+        <DCCReference Include="..\..\DN.Progress.pas"/>
+        <DCCReference Include="..\..\DN.Progress.Intf.pas"/>
+        <DCCReference Include="..\..\DN.ProjectGroupInfo.pas"/>
+        <DCCReference Include="..\..\DN.ProjectGroupInfo.Intf.pas"/>
+        <DCCReference Include="..\..\DN.ProjectInfo.pas"/>
+        <DCCReference Include="..\..\DN.ProjectInfo.Intf.pas"/>
+        <DCCReference Include="..\..\DN.Settings.pas"/>
+        <DCCReference Include="..\..\DN.Settings.Intf.pas"/>
+        <DCCReference Include="..\..\DN.Setup.pas"/>
+        <DCCReference Include="..\..\DN.Setup.Core.pas"/>
+        <DCCReference Include="..\..\DN.Setup.Intf.pas"/>
+        <DCCReference Include="..\..\DN.ToolsApi.pas"/>
+        <DCCReference Include="..\..\DN.ToolsApi.ExpertService.pas"/>
+        <DCCReference Include="..\..\DN.ToolsApi.ExpertService.Intf.pas"/>
+        <DCCReference Include="..\..\DN.ToolsApi.Extension.pas"/>
+        <DCCReference Include="..\..\DN.ToolsApi.Extension.Intf.pas"/>
+        <DCCReference Include="..\..\DN.Types.pas"/>
+        <DCCReference Include="..\..\DN.Uninstaller.pas"/>
+        <DCCReference Include="..\..\DN.Uninstaller.IDE.pas"/>
+        <DCCReference Include="..\..\DN.Uninstaller.Intf.pas"/>
+        <DCCReference Include="..\..\DN.VariableResolver.pas"/>
+        <DCCReference Include="..\..\DN.VariableResolver.Compiler.pas"/>
+        <DCCReference Include="..\..\DN.VariableResolver.Intf.pas"/>
+        <DCCReference Include="..\..\DN.Version.pas"/>
+        <DCCReference Include="..\..\DN.Zip.pas"/>
+        <BuildConfiguration Include="Release">
+            <Key>Cfg_2</Key>
+            <CfgParent>Base</CfgParent>
+        </BuildConfiguration>
+        <BuildConfiguration Include="Base">
+            <Key>Base</Key>
+        </BuildConfiguration>
+        <BuildConfiguration Include="Debug">
+            <Key>Cfg_1</Key>
+            <CfgParent>Base</CfgParent>
+        </BuildConfiguration>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Delphi.Personality.12</Borland.Personality>
+        <Borland.ProjectType>Package</Borland.ProjectType>
+        <BorlandProject>
+            <Delphi.Personality>
+                <Source>
+                    <Source Name="MainSource">Delphinus.dpk</Source>
+                </Source>
+                <Excluded_Packages>
+                    <Excluded_Packages Name="$(BDSBIN)\dcloffice2k200.bpl">Microsoft Office 2000 Sample Automation Server Wrapper Components</Excluded_Packages>
+                    <Excluded_Packages Name="$(BDSBIN)\dclofficexp200.bpl">Microsoft Office XP Sample Automation Server Wrapper Components</Excluded_Packages>
+                </Excluded_Packages>
+            </Delphi.Personality>
+            <Deployment/>
+            <Platforms>
+                <Platform value="OSX32">False</Platform>
+                <Platform value="Win32">True</Platform>
+                <Platform value="Win64">False</Platform>
+            </Platforms>
+        </BorlandProject>
+        <ProjectFileVersion>12</ProjectFileVersion>
+    </ProjectExtensions>
+    <Import Project="$(BDS)\Bin\CodeGear.Delphi.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Delphi.Targets')"/>
+    <Import Project="$(APPDATA)\Embarcadero\$(BDSAPPDATABASEDIR)\$(PRODUCTVERSION)\UserTools.proj" Condition="Exists('$(APPDATA)\Embarcadero\$(BDSAPPDATABASEDIR)\$(PRODUCTVERSION)\UserTools.proj')"/>
+</Project>
