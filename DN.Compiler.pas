@@ -11,9 +11,11 @@ interface
 
 uses
   Classes,
+  Generics.Collections,
   DN.Types,
   DN.Compiler.Intf,
-  DN.VariableResolver.Intf;
+  DN.VariableResolver.Intf,
+  DN.VariableResolver.Compiler.Factory;
 
 type
   TDNCompiler = class(TInterfacedObject, IDNCompiler)
@@ -26,6 +28,7 @@ type
     FConfig: TDNCompilerConfig;
     FPlatform: TDNCompilerPlatform;
     FLog: TStringList;
+    FVariableResolverFactory: TDNCompilerVariableResolverFacory;
     function GetEXEOutput: string;
     function GetDCPOutput: string;
     function GetDCUOutput: string;
@@ -41,11 +44,14 @@ type
     function GetLog: TStrings;
     function GetPlatform: TDNCompilerPlatform;
     procedure SetPlatform(const Value: TDNCompilerPlatform);
+    function GetParameterOverride(const AProperty: string): string;
+    procedure SetParameterOverride(const AProperty: string; const Value: string);
   protected
+    FParameterOverrides: TDictionary<string, string>;
     function GetVersion: TCompilerVersion; virtual;
     function CreateResolver: IVariableResolver;
   public
-    constructor Create();
+    constructor Create(const AVariableResolverFactory: TDNCompilerVariableResolverFacory);
     destructor Destroy(); override;
     function Compile(const AProjectFile: string): Boolean; virtual; abstract;
     property DCUOutput: string read GetDCUOutput write SetDCUOutput;
@@ -57,14 +63,14 @@ type
     property Platform: TDNCompilerPlatform read GetPlatform write SetPlatform;
     property Log: TStrings read GetLog;
     property Version: TCompilerVersion read GetVersion;
+    property ParameterOverride[const AProperty: string]: string read GetParameterOverride write SetParameterOverride;
   end;
 
 implementation
 
 uses
   SysUtils,
-  StrUtils,
-  DN.VariableResolver.Compiler;
+  StrUtils;
 
 { TDNCompiler }
 
@@ -73,29 +79,38 @@ begin
   Result := FEXEOutput;
 end;
 
-constructor TDNCompiler.Create;
+constructor TDNCompiler.Create(const AVariableResolverFactory: TDNCompilerVariableResolverFacory);
 begin
-  inherited;
+  inherited Create();
   FLog := TStringList.Create();
+  FParameterOverrides := TDictionary<string, string>.Create();
   FTarget := ctBuild;
   FConfig := ccRelease;
   FPlatform := cpWin32;
+  FVariableResolverFactory := AVariableResolverFactory;
 end;
 
 function TDNCompiler.CreateResolver: IVariableResolver;
 begin
-  Result := TCompilerVariableResolver.Create(Platform, Config);
+  Result := FVariableResolverFactory(Platform, Config);
 end;
 
 destructor TDNCompiler.Destroy;
 begin
   FLog.Free();
+  FParameterOverrides.Free;
   inherited;
 end;
 
 function TDNCompiler.GetLog: TStrings;
 begin
   Result := FLog;
+end;
+
+function TDNCompiler.GetParameterOverride(const AProperty: string): string;
+begin
+  if not FParameterOverrides.TryGetValue(AProperty, Result) then
+    Result := '';
 end;
 
 function TDNCompiler.GetPlatform: TDNCompilerPlatform;
@@ -136,6 +151,12 @@ end;
 procedure TDNCompiler.SetEXEOutput(const Value: string);
 begin
   FEXEOutput := Value;
+end;
+
+procedure TDNCompiler.SetParameterOverride(const AProperty: string;
+  const Value: string);
+begin
+  FParameterOverrides.AddOrSetValue(AProperty, Value);
 end;
 
 procedure TDNCompiler.SetPlatform(const Value: TDNCompilerPlatform);

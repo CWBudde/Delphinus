@@ -21,12 +21,15 @@ uses
   DN.PackageDetailView,
   Delphinus.Forms,
   DN.Settings.Intf,
+  DN.Setup.Dependency.Processor.Intf,
   DN.Setup.Intf,
+  DN.Setup.Dependency.Resolver.Intf,
   DN.FileService.Intf,
   Delphinus.CategoryFilterView,
   Delphinus.ProgressDialog,
   DN.PackageFilter,
   DN.Version,
+  DN.EnvironmentOptions.Intf,
   ExtCtrls,
   StdCtrls,
   Registry;
@@ -50,6 +53,10 @@ type
     actInstallFolder: TAction;
     actAbout: TAction;
     btnAbout: TToolButton;
+    pnlWarning: TPanel;
+    imgMessageSymbol: TImage;
+    imgCloseWarning: TImage;
+    lbMessage: TLabel;
     procedure actRefreshExecute(Sender: TObject);
     procedure btnInstallFolderClick(Sender: TObject);
     procedure actOptionsExecute(Sender: TObject);
@@ -59,6 +66,7 @@ type
     procedure edSearchRightButtonClick(Sender: TObject);
     procedure edSearchLeftButtonClick(Sender: TObject);
     procedure actAboutExecute(Sender: TObject);
+    procedure imgCloseWarningClick(Sender: TObject);
   private
     { Private declarations }
     FOverView: TPackageOverView;
@@ -74,6 +82,9 @@ type
     FProgressDialog: TProgressDialog;
     FFilter: string;
     FFileService: IDNFileService;
+    FDummyPic: TGraphic;
+    FEnvironmentOptionsService: IDNEnvironmentOptionsService;
+    procedure ReloadPackages;
     procedure InstallPackage(const APackage: IDNPackage);
     procedure UnInstallPackage(const APackage: IDNPackage);
     procedure UpdatePackage(const APackage: IDNPackage);
@@ -90,6 +101,10 @@ type
     procedure ShowDetail(const APackage: IDNPackage);
     procedure RecreatePackageProvider();
     function CreateSetup: IDNSetup;
+    function CreateDependencyProcessor: IDNSetupDependencyProcessor;
+    function CreateInstallDependencyResolver: IDNSetupDependencyResolver;
+    function CreateUninstallDependencyResolver: IDNSetupDependencyResolver;
+    function IsStarter: Boolean;
     procedure HandleCategoryChanged(Sender: TObject; ANewCategory: TPackageCategory);
     procedure HandleSelectedPackageChanged(Sender: TObject);
     procedure HandleAsyncProgress(const ATask, AItem: string; AProgress, AMax: Int64);
@@ -98,6 +113,7 @@ type
     procedure DoFilter(const AFilter: string);
     procedure FilterPackage(const APackage: IDNPackage; var AAccepted: Boolean);
     procedure LoadIcons;
+    procedure ShowWarning(const AMessage: string);
   public
     { Public declarations }
     constructor Create(AOwner: TComponent); override;
@@ -114,25 +130,39 @@ uses
   IOUtils,
   RTTI,
   Types,
+  PNGImage,
   DN.Types,
+  DN.Package.Finder.Intf,
+  DN.Package.Finder,
   DN.PackageProvider.GitHub,
   DN.PackageProvider.Installed,
+  DN.PackageProvider.State.Intf,
   Delphinus.SetupDialog,
   DN.Compiler.Intf,
   DN.Compiler.MSBuild,
+  DN.Compiler.IDE,
   DN.Installer.Intf,
   DN.Installer.IDE,
   DN.Uninstaller.Intf,
   DN.Uninstaller.IDE,
   DN.Setup,
+  DN.Setup.Dependency.Resolver.Install,
+  DN.Setup.Dependency.Resolver.Uninstall,
+  DN.Setup.Dependency.Processor,
   Delphinus.OptionsDialog,
   DN.HttpClient.Intf,
   DN.HttpClient.WinHttp,
   DN.Progress.Intf,
   DN.Settings,
-  DN.ToolsApi.ExpertService,
-  DN.ToolsApi.ExpertService.Intf,
+  DN.ExpertService,
+  DN.ExpertService.Intf,
   DN.FileService,
+  DN.EnvironmentOptions.IDE,
+  DN.BPLService.Intf,
+  DN.BPLService.ToolsApi,
+  DN.VariableResolver.Intf,
+  DN.VariableResolver.Compiler,
+  DN.VariableResolver.Compiler.Factory,
   Delphinus.Resources.Names,
   Delphinus.Resources,
   Delphinus.About,
@@ -178,35 +208,7 @@ end;
 
 procedure TDelphinusDialog.actRefreshExecute(Sender: TObject);
 begin
-  TThread.CreateAnonymousThread(
-    procedure
-    var
-      LProgress: IDNProgress;
-    begin
-      try
-        if Supports(FPackageProvider, IDNProgress, LProgress) then
-          LProgress.OnProgress := HandleAsyncProgress;
-        if FPackageProvider.Reload() then
-        begin
-          FPackages.Clear;
-          FPackages.AddRange(FPackageProvider.Packages);
-        end;
-      finally
-        if Assigned(LProgress) then
-          LProgress.OnProgress := nil;
-        TThread.Queue(nil,
-          procedure
-          begin
-            FCategoryFilteView.OnlineCount := FPackages.Count;
-            RefreshInstalledPackages();
-            FProgressDialog.ModalResult := mrOk;
-          end);
-      end;
-    end).Start;
-  FProgressDialog.Caption := 'Delphinus';
-  FProgressDialog.Task := 'Refreshing';
-  FProgressDialog.Progress := -1;
-  FProgressDialog.ShowModal();
+  ReloadPackages();
 end;
 
 procedure TDelphinusDialog.btnInstallFolderClick(Sender: TObject);
@@ -215,7 +217,7 @@ var
 begin
   if dlgSelectInstallFile.Execute() then
   begin
-    LDialog := TSetupDialog.Create(CreateSetup());
+    LDialog := TSetupDialog.Create(CreateSetup(), CreateInstallDependencyResolver(), CreateDependencyProcessor());
     try
       if LDialog.ExecuteInstallationFromDirectory(ExtractFilePath(dlgSelectInstallFile.FileName)) then
         RefreshInstalledPackages();
@@ -233,6 +235,7 @@ begin
   FInstalledPackages := TList<IDNPackage>.Create();
   FUpdatePackages := TList<IDNPackage>.Create();
   FFileService := TDNFileService.Create((BorlandIDEServices as IOTAServices).GetBaseRegistryKey);
+  FEnvironmentOptionsService := TDNIDEEnvironmentOptionsService.Create();
 
   FProgressDialog := TProgressDialog.Create(Self);
   FDetailView := TPackageDetailView.Create(Self);
@@ -271,6 +274,29 @@ begin
   LoadIcons();
 
   FFileService.Cleanup();
+  if IsStarter then
+    Caption := Caption + ' (Starter Edition)';
+end;
+
+function TDelphinusDialog.CreateDependencyProcessor: IDNSetupDependencyProcessor;
+begin
+  Result := TDNSetupDependencyProcessor.Create(CreateSetup());
+end;
+
+function TDelphinusDialog.CreateInstallDependencyResolver: IDNSetupDependencyResolver;
+begin
+  Result := TDNSetupInstallDependencyResolver.Create(
+    function: IDNPackageFinder
+    begin
+      Result := TDNPackageFinder.Create(FInstalledPackages.ToArray);
+    end,
+    function: IDNPackageFinder
+    begin
+      if FPackages.Count = 0 then
+        ReloadPackages();
+      Result := TDNPackageFinder.Create(FPackages.ToArray);
+    end
+  );
 end;
 
 function TDelphinusDialog.CreateSetup: IDNSetup;
@@ -279,15 +305,37 @@ var
   LInstaller: IDNInstaller;
   LUninstaller: IDNUninstaller;
   LExpertService: IDNExpertService;
+  LBPLService: IDNBPLService;
+  LVariableResolverFactory: TDNCompilerVariableResolverFacory;
 begin
-  LCompiler := TDNMSBuildCompiler.Create(GetEnvironmentVariable('BDSBIN'));
+  LVariableResolverFactory :=
+    function(APlatform: TDNCompilerPlatform; AConfig: TDNCompilerConfig): IVariableResolver
+    begin
+      Result := TCompilerVariableResolver.Create(APlatform, AConfig, GetEnvironmentVariable('BDSCommonDir'));
+    end;
+
+  if IsStarter then
+    LCompiler := TDNIDECompiler.Create(LVariableResolverFactory)
+  else
+    LCompiler := TDNMSBuildCompiler.Create(LVariableResolverFactory, GetEnvironmentVariable('BDSBIN'));
   LCompiler.BPLOutput := GetBPLDirectory();
   LCompiler.DCPOutput := GetDCPDirectory();
   LExpertService := TDNExpertService.Create((BorlandIDEServices as IOTAServices).GetBaseRegistryKey());
-  LInstaller := TDNIDEInstaller.Create(LCompiler, LExpertService);
-  LUninstaller := TDNIDEUninstaller.Create(LExpertService, FFileService);
+  LBPLService := TDNToolsApiBPLService.Create();
+  LInstaller := TDNIDEInstaller.Create(LCompiler, FEnvironmentOptionsService, LBPLService, LVariableResolverFactory, LExpertService);
+  LUninstaller := TDNIDEUninstaller.Create(FEnvironmentOptionsService, LBPLService, LExpertService, FFileService);
   Result := TDNSetup.Create(LInstaller, LUninstaller, FPackageProvider);
   Result.ComponentDirectory := GetComponentDirectory();
+end;
+
+function TDelphinusDialog.CreateUninstallDependencyResolver: IDNSetupDependencyResolver;
+begin
+  Result := TDNSetupUninstallDependencyResolver.Create(
+    function: TArray<IDNPackage>
+    begin
+      Result := FInstalledPackages.ToArray;
+    end
+  );
 end;
 
 destructor TDelphinusDialog.Destroy;
@@ -299,6 +347,7 @@ begin
   FPackageProvider := nil;
   FInstalledPackageProvider := nil;
   FSettings := nil;
+  FDummyPic.Free;
   inherited;
 end;
 
@@ -408,11 +457,10 @@ function TDelphinusDialog.GetInstalledVersion(
 var
   LPackage: IDNPackage;
 begin
-  Result := TDNVersion.Create();
   LPackage := GetInstalledPackage(APackage);
   if Assigned(LPackage) then
   begin
-    if LPackage.Versions.Count > 0 then
+    if (LPackage.Versions.Count > 0) and not LPackage.Versions.First.Value.IsEmpty then
       Result := LPackage.Versions[0].Value
     else
       Result := TDNVersion.Create(0, 0, 0, 'none');
@@ -474,13 +522,18 @@ begin
   ShowDetail(GetActiveOverView().SelectedPackage);
 end;
 
+procedure TDelphinusDialog.imgCloseWarningClick(Sender: TObject);
+begin
+  pnlWarning.Visible := False;
+end;
+
 procedure TDelphinusDialog.InstallPackage(const APackage: IDNPackage);
 var
   LDialog: TSetupDialog;
 begin
   if Assigned(APackage) then
   begin
-    LDialog := TSetupDialog.Create(CreateSetup());
+    LDialog := TSetupDialog.Create(CreateSetup(), CreateInstallDependencyResolver(), CreateDependencyProcessor());
     try
       if LDialog.ExecuteInstallation(APackage) then
         RefreshInstalledPackages();
@@ -496,7 +549,30 @@ begin
   Result := Assigned(GetInstalledPackage(APackage));
 end;
 
+function TDelphinusDialog.IsStarter: Boolean;
+var
+  LService: IOTAServices;
+  LReg: TRegistry;
+  LBase: string;
+begin
+  Result := False;
+  LService := BorlandIDEServices as IOTAServices;
+  LBase := LService.GetBaseRegistryKey();
+  LReg := TRegistry.Create();
+  try
+    if LReg.OpenKeyReadOnly(LBase) then
+    begin
+      if LReg.ValueExists('Edition') then
+        Result := SameText(LReg.ReadString('Edition'), 'Starter');
+    end;
+  finally
+    LReg.Free;
+  end;
+end;
+
 procedure TDelphinusDialog.LoadIcons;
+var
+  LResStream: TResourceStream;
 begin
   actRefresh.ImageIndex := AddIconToImageList(ilMenu, Ico_Refresh);
   actOptions.ImageIndex := AddIconToImageList(ilMenu, Ico_Options);
@@ -504,6 +580,17 @@ begin
   actAbout.ImageIndex := AddIconToImageList(ilMenu, Ico_About);
   edSearch.LeftButton.ImageIndex := AddIconToImageList(ilSmall, Ico_Search);
   edSearch.RightButton.ImageIndex := AddIconToImageList(ilSmall, Ico_Close);
+  LResStream := TResourceStream.Create(HInstance, Png_Package, RT_RCDATA);
+  try
+    FDummyPic := TPngImage.Create();
+    FDummyPic.LoadFromStream(LResStream);
+  finally
+    LResStream.Free;
+  end;
+  imgMessageSymbol.Picture.Icon.LoadFromResourceName(HInstance, Ico_Warning);
+  ilSmall.GetIcon(edSearch.RightButton.ImageIndex, imgCloseWarning.Picture.Icon);
+  FOverView.DummyPic := FDummyPic;
+  FDetailView.DummyPic := FDummyPic;
 end;
 
 procedure TDelphinusDialog.RecreatePackageProvider;
@@ -519,7 +606,15 @@ end;
 procedure TDelphinusDialog.RefreshInstalledPackages;
 var
   LInstalledPackage: IDNPackage;
+  LState: IDNPackageProviderState;
 begin
+  if Supports(FPackageProvider, IDNPackageProviderState, LState) then
+  begin
+    if LState.State <> psOk then
+      ShowWarning(LState.LastError)
+    else
+      pnlWarning.Visible := False;
+  end;
   if FInstalledPackageProvider.Reload() then
   begin
     FInstalledPackages.Clear;
@@ -542,10 +637,64 @@ begin
   GetActiveOverView().Packages.AddRange(GetActivePackageSource());
 end;
 
+procedure TDelphinusDialog.ReloadPackages;
+begin
+  TThread.CreateAnonymousThread(
+    procedure
+    var
+      LProgress: IDNProgress;
+      LMessage: string;
+    begin
+      try
+        try
+          if Supports(FPackageProvider, IDNProgress, LProgress) then
+            LProgress.OnProgress := HandleAsyncProgress;
+          if FPackageProvider.Reload() then
+          begin
+            FPackages.Clear;
+            FPackages.AddRange(FPackageProvider.Packages);
+          end;
+        finally
+          if Assigned(LProgress) then
+            LProgress.OnProgress := nil;
+          TThread.Queue(nil,
+            procedure
+            begin
+              begin
+                FCategoryFilteView.OnlineCount := FPackages.Count;
+                RefreshInstalledPackages();
+                FProgressDialog.ModalResult := mrOk;
+              end;
+            end);
+        end;
+      except
+        on E: Exception do
+        begin
+          LMessage := E.ToString;
+          TThread.Queue(nil,
+            procedure
+            begin
+              ShowWarning('Error occured while reloading packages: ' + LMessage);
+            end);
+        end;
+      end;
+    end).Start;
+  FProgressDialog.Caption := 'Delphinus';
+  FProgressDialog.Task := 'Refreshing';
+  FProgressDialog.Progress := -1;
+  FProgressDialog.ShowModal();
+end;
+
 procedure TDelphinusDialog.ShowDetail(const APackage: IDNPackage);
 begin
   FDetailView.Package := APackage;
   FDetailView.BringToFront();
+end;
+
+procedure TDelphinusDialog.ShowWarning(const AMessage: string);
+begin
+  lbMessage.Caption := AMessage;
+  pnlWarning.Visible := True;
 end;
 
 procedure TDelphinusDialog.UnInstallPackage(const APackage: IDNPackage);
@@ -554,7 +703,7 @@ var
 begin
   if Assigned(APackage) then
   begin
-    LDialog := TSetupDialog.Create(CreateSetup());
+    LDialog := TSetupDialog.Create(CreateSetup(), CreateUninstallDependencyResolver(), CreateDependencyProcessor());
     try
       if LDialog.ExecuteUninstallation(APackage) then
         RefreshInstalledPackages();
@@ -570,7 +719,7 @@ var
 begin
   if Assigned(APackage) then
   begin
-    LDialog := TSetupDialog.Create(CreateSetup());
+    LDialog := TSetupDialog.Create(CreateSetup(), CreateInstallDependencyResolver(), CreateDependencyProcessor());
     try
       if LDialog.ExecuteUpdate(GetOnlinePackage(APackage))then
         RefreshInstalledPackages();

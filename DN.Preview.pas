@@ -39,6 +39,7 @@ type
     FOnInstall: TNotifyEvent;
     FOnUninstall: TNotifyEvent;
     FOSImages: TImageList;
+    FDummyPic: TGraphic;
     procedure SetSelected(const Value: Boolean);
     procedure SetPackage(const Value: IDNPackage);
     procedure SetInstalledVersion(const Value: TDNVersion);
@@ -58,6 +59,7 @@ type
     constructor Create(AOwner: TComponent; AOsImages: TImageList; AButtonImages: TImageList); reintroduce;
     destructor Destroy(); override;
     property Package: IDNPackage read FPackage write SetPackage;
+    property DummyPic: TGraphic read FDummyPic write FDummyPic;
     property Selected: Boolean read FSelected write SetSelected;
     property InstalledVersion: TDNVersion read FInstalledVersion write SetInstalledVersion;
     property UpdateVersion: TDNVersion read FUpdateVersion write SetUpdateVersion;
@@ -81,7 +83,7 @@ implementation
 
 uses
   DN.Graphics,
-  DN.Compiler.Intf;
+  DN.Types;
 
 { TPreview }
 
@@ -129,12 +131,19 @@ begin
   LTemp := TBitmap.Create();
   try
     LTemp.PixelFormat := pf32bit;
-    if Assigned(FPackage.Picture) then
+    if Assigned(FPackage.Picture.Graphic) then
     begin
       LTemp.SetSize(FPackage.Picture.Width, FPackage.Picture.Height);
       LTemp.Canvas.Brush.Color := clWhite;
       LTemp.Canvas.FillRect(LTemp.Canvas.ClipRect);
       LTemp.Canvas.Draw(0, 0, FPackage.Picture.Graphic);
+    end
+    else if Assigned(FDummyPic) then
+    begin
+      LTemp.SetSize(FDummyPic.Width, FDummyPic.Height);
+      LTemp.Canvas.Brush.Color := clWhite;
+      LTemp.Canvas.FillRect(LTemp.Canvas.ClipRect);
+      LTemp.Canvas.Draw(0, 0, FDummyPic);
     end;
     FTarget.SetSize(CPreviewImageSize, CPreviewImageSize);
     FTarget.Canvas.FillRect(FTarget.Canvas.ClipRect);
@@ -187,15 +196,14 @@ begin
 
     Canvas.Draw(CPadding, CPadding, FTarget);
     Canvas.Font.Style := [TFontStyle.fsBold];
-    Canvas.Font.Color := clCaptionText;
+    Canvas.Font.Color := clWindowText;
     Canvas.TextOut(CLeftMargin, CMargin, FPackage.Name);
     Canvas.Font.Style := [];
     Canvas.Font.Color := clGrayText;
     Canvas.TextOut(CLeftMargin, (CMargin + Abs(Canvas.Font.Height)), FPackage.Author);
 
-    if FPackage.LicenseType <> '' then
-      LLicenseType := FPackage.LicenseType
-    else
+    LLicenseType := FPackage.LicenseTypes;
+    if LLicenseType = '' then
       LLicenseType := 'No license';
 
     Canvas.TextOut(CLeftMargin, (CMargin + Abs(Canvas.Font.Height))*2, LLicenseType);
@@ -232,15 +240,34 @@ var
 begin
   LOffset :=  FButton.Left - FOSImages.Width - CMargin;
   LTopOffset := Height - FOSImages.Height - CMargin;
-  if ([cpWin32, cpWin64] * FPackage.Platforms) <> [] then
+
+  if cpLinux64 in FPackage.Platforms then
   begin
-    FOSImages.Draw(Canvas, LOffset, LTopOffset, 0);
+    FOSImages.Draw(Canvas, LOffset, LTopOffset, 4);
+    Dec(LOffset, FOSImages.Width);
+  end;
+
+  if ([cpIOSDevice32, cpIOSDevice64] * FPackage.Platforms) <> [] then
+  begin
+    FOSImages.Draw(Canvas, LOffset, LTopOffset, 3);
+    Dec(LOffset, FOSImages.Width);
+  end;
+
+  if cpAndroid in FPackage.Platforms then
+  begin
+    FOSImages.Draw(Canvas, LOffset, LTopOffset, 2);
     Dec(LOffset, FOSImages.Width);
   end;
 
   if cpOSX32 in FPackage.Platforms then
   begin
     FOSImages.Draw(Canvas, LOffset, LTopOffset, 1);
+    Dec(LOffset, FOSImages.Width);
+  end;
+
+  if ([cpWin32, cpWin64] * FPackage.Platforms) <> [] then
+  begin
+    FOSImages.Draw(Canvas, LOffset, LTopOffset, 0);
   end;
 end;
 

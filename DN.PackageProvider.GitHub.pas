@@ -16,6 +16,7 @@ uses
   SysUtils,
   SyncObjs,
   Generics.Collections,
+  DN.Types,
   DN.Package.Github,
   DN.Package.Intf,
   DN.PackageProvider,
@@ -23,35 +24,46 @@ uses
   DN.Progress.Intf,
   DN.HttpClient.Intf,
   DN.JSon,
-  DN.JSOnFile.Info;
+  DN.JSOnFile.Info,
+  DN.PackageProvider.State.Intf,
+  DN.Package.Version.Intf;
 
 type
-  TDNGitHubPackageProvider = class(TDNPackageProvider, IDNProgress)
+  TDNGitHubPackageProvider = class(TDNPackageProvider, IDNProgress, IDNPackageProviderState)
   private
     FProgress: IDNProgress;
     FPushDates: TDictionary<string, string>;
     FExistingIDs: TDictionary<TGUID, Integer>;
     FDateMutex: TMutex;
+    FState: IDNPackageProviderState;
+    FLoadPictures: Boolean;
     function LoadVersionInfo(const APackage: IDNPackage; const AAuthor, AName, AFirstVersion, AReleases: string): Boolean;
+    procedure AddDependencies(const AVersion: IDNPackageVersion; AInf: TInfoFile);
     procedure AddPackageFromJSon(AJSon: TJSONObject);
     function CreatePackageWithMetaInfo(AItem: TJSONObject; out APackage: IDNPackage): Boolean;
     procedure LoadPicture(APicture: TPicture; AAuthor, ARepository, AVersion, APictureFile: string);
     function GetInfoFile(const AAuthor, ARepository, AVersion: string; AInfo: TInfoFile): Boolean;
-    function GetFileText(const AAuthor, ARepository, AVersion, AFilePath: string; out AText: string): Boolean;
+    function GetGithubFileText(const AAuthor, ARepository, AVersion, AFilePath: string; out AText: string): Boolean;
+    function GetBitbucketFileText(const AAuthor, ARepository, AVersion, AFilePath: string; out AText: string): Boolean;
     function GetFileStream(const AAuthor, ARepository, AVersion, AFilePath: string; AFile: TStream): Boolean;
     function GetReleaseText(const AAuthor, ARepository: string; out AReleases: string): Boolean;
     procedure HandleDownloadProgress(AProgress, AMax: Int64);
+    procedure CheckRateLimit;
   protected
     FClient: IDNHttpClient;
-    function GetLicense(const APackage: TDNGitHubPackage): string;
+    function GetLicense(const APackage: TDNGitHubPackage; const ALicense: TDNLicense): string;
     function GetPushDateFile: string;
     function GetRepoList(out ARepos: TJSONArray): Boolean; virtual;
+    function GetRepositoryDownloadUrl(const AName, AUser, ARepo, AVersion: string): string;
+    function GetRepositoryIssueUrl(const AName, AUser, ARepo: string): string;
+    function GetProjectUrl(const AName, AUser, ARepo: string): string;
     procedure SavePushDates;
     procedure LoadPushDates;
     //properties for interfaceredirection
     property Progress: IDNProgress read FProgress implements IDNProgress;
+    property State: IDNPackageProviderState read FState implements IDNPackageProviderState;
   public
-    constructor Create(const AClient: IDNHttpClient);
+    constructor Create(const AClient: IDNHttpClient; ALoadPictures: Boolean = True);
     destructor Destroy(); override;
     function Reload(): Boolean; override;
     function Download(const APackage: IDNPackage; const AVersion: string; const AFolder: string; out AContentFolder: string): Boolean; override;
@@ -64,27 +76,62 @@ implementation
 
 uses
   IOUtils,
+  DateUtils,
   DN.IOUtils,
   StrUtils,
   jpeg,
   pngimage,
-  DN.Types,
+  DN.Version,
   DN.Package,
   DN.Zip,
   DN.Package.Version,
-  DN.Package.Version.Intf,
+  DN.Package.Dependency,
+  DN.Package.Dependency.Intf,
   DN.Progress,
   DN.Environment,
-  Delphinus.Resources.Names;
+  DN.Graphics.Loader,
+  DN.PackageProvider.GitHub.State;
 
 const
+  CGithup = 'Github';
+  CGithubProjectUrl = 'https://github.com/%s/%s';
+  CGithubIssueUrl = 'https://github.com/%s/%s/issues';
+  CGithubDownloadUrl = 'https://api.github.com/repos/%s/%s/zipball/%s';
   CGithubFileContent = 'https://api.github.com/repos/%s/%s/contents/%s?ref=%s';//user/repo filepath/branch
   CGitRepoSearch = 'https://api.github.com/search/repositories?q="Delphinus-Support"+in:readme&per_page=100';
   CGithubRepoReleases = 'https://api.github.com/repos/%s/%s/releases';// user/repo/releases
   CMediaTypeRaw = 'application/vnd.github.v3.raw';
   CPushDates = 'PushDates.ini';
 
+  CBitbucket = 'Bitbucket';
+  CBitbucketDownloadUrl = 'https://bitbucket.org/%s/%s/get/%s.zip';
+  CBitbucketIssueUrl = 'https://bitbucket.org/%s/%s/issues';
+  CBitbucketFileContent = 'https://bitbucket.org/%s/%s/raw/%s/%s';
+  CBitbucketProjectUrl = 'https://bitbucket.org/%s/%s';
+
+
+
+
+
+type
+  EGithubProviderException = EAbort;
+  ERateLimitException = EGithubProviderException;
+  EInvalidProviderSetup = EGithubProviderException;
+
 { TDCPMPackageProvider }
+
+procedure TDNGitHubPackageProvider.AddDependencies(
+  const AVersion: IDNPackageVersion; AInf: TInfoFile);
+var
+  LInfDependency: TInfoDependency;
+  LDependency: IDNPackageDependency;
+begin
+  for LInfDependency in AInf.Dependencies do
+  begin
+    LDependency := TDNPackageDependency.Create(LInfDependency.ID, LInfDependency.Version);
+    AVersion.Dependencies.Add(LDependency);
+  end;
+end;
 
 procedure TDNGitHubPackageProvider.AddPackageFromJSon(AJSon: TJSONObject);
 var
@@ -93,6 +140,19 @@ begin
   if CreatePackageWithMetaInfo(AJSon, LPackage) then
   begin
     Packages.Add(LPackage);
+  end;
+end;
+
+procedure TDNGitHubPackageProvider.CheckRateLimit;
+var
+  LUnixTime: Int64;
+  LResetTime: TDateTime;
+begin
+  if FClient.ResponseHeader['X-RateLimit-Remaining'] = '0' then
+  begin
+    LUnixTime := StrToInt64Def(FClient.ResponseHeader['X-RateLimit-Reset'], 0);
+    LResetTime := TTimeZone.Local.ToLocalTime(UnixToDateTime(LUnixTime));
+    raise ERateLimitException.Create('Ratelimit exceeded. Wait for reset. Reset is at ' + DateTimeToStr(LResetTime));
   end;
 end;
 
@@ -107,6 +167,8 @@ begin
   FExistingIDs := TDictionary<TGUID, Integer>.Create();
   LKey := StringReplace(GetPushDateFile(), '\', '/', [rfReplaceAll]);
   FDateMutex := TMutex.Create(nil, False, LKey);
+  FState := TDNGithubPackageProviderState.Create(FClient);
+  FLoadPictures := ALoadPictures;
 end;
 
 function TDNGitHubPackageProvider.CreatePackageWithMetaInfo(AItem: TJSONObject;
@@ -117,6 +179,7 @@ var
   LFullName, LPushDate, LOldPushDate: string;
   LHeadInfo: TInfoFile;
   LHomePage: TJSONValue;
+  LHeadVersion: TDNPackageVersion;
 const
   CArchivePlaceholder = '{archive_format}{/ref}';
 begin
@@ -148,12 +211,18 @@ begin
       LPackage.RepositoryName := LName;
       LPackage.DefaultBranch := LDefaultBranch;
 
-      LPackage.ProjectUrl := AItem.GetValue('html_url').Value;
+      LPackage.ProjectUrl := GetProjectUrl(LHeadInfo.RepositoryType, LHeadInfo.RepositoryUser, LHeadInfo.Repository);
+      if LPackage.ProjectUrl = '' then
+        LPackage.ProjectUrl := AItem.GetValue('html_url').Value;
       LHomePage := AItem.GetValue('homepage');
       if LHomePage is TJSONString then
         LPackage.HomepageUrl := LHomePage.Value;
 
-      if AItem.GetValue('has_issues') is TJSONTrue then
+      if LHeadInfo.RepositoryRedirectIssues then
+        LPackage.ReportUrl := GetRepositoryIssueUrl(LHeadInfo.RepositoryType, LHeadInfo.RepositoryUser, LHeadInfo.Repository);
+      if LHeadInfo.ReportUrl <> '' then
+        LPackage.ReportUrl := LHeadInfo.ReportUrl;
+      if (LPackage.ReportUrl = '') and (AItem.GetValue('has_issues') is TJSONTrue) then
         LPackage.ReportUrl := LPackage.ProjectUrl + '/issues';
       
       if LHeadInfo.Name <> '' then
@@ -161,19 +230,30 @@ begin
       else
         LPackage.Name := LName;
       LPackage.ID := LHeadInfo.ID;
-      LPackage.CompilerMin := LHeadInfo.CompilerMin;
-      LPackage.CompilerMax := LHeadInfo.CompilerMax;
-      LPackage.LicenseType := LHeadInfo.LicenseType;
-      LPackage.LicenseFile := LHeadInfo.LicenseFile;
+      LPackage.CompilerMin := LHeadInfo.PackageCompilerMin;
+      LPackage.CompilerMax := LHeadInfo.PackageCompilerMax;
+      LPackage.Licenses.AddRange(LHeadInfo.Licenses);
       LPackage.Platforms := LHeadInfo.Platforms;
+      LPackage.RepositoryType := LHeadInfo.RepositoryType;
+      LPackage.RepositoryUser := LHeadInfo.RepositoryUser;
+      LPackage.Repository := LHeadInfo.Repository;
       APackage := LPackage;
-      LoadPicture(APackage.Picture, LAuthor, LPackage.RepositoryName, LPackage.DefaultBranch, LHeadInfo.Picture);
+      if FLoadPictures then
+        LoadPicture(APackage.Picture, LAuthor, LPackage.RepositoryName, LPackage.DefaultBranch, LHeadInfo.Picture);
       LoadVersionInfo(APackage, LAuthor, LName, LHeadInfo.FirstVersion, LReleases);
+      LHeadVersion := TDNPackageVersion.Create();
+      LHeadVersion.Name := 'HEAD';
+      LHeadVersion.Value := TDNVersion.Create();
+      LHeadVersion.CompilerMin := LHeadInfo.CompilerMin;
+      LHeadVersion.CompilerMax := LHeadInfo.CompilerMax;
+      AddDependencies(LHeadVersion, LHeadInfo);
+      APackage.Versions.Add(LHeadVersion);
       FPushDates.AddOrSetValue(LFullName, LPushDate);
       Result := True;
     end;
   finally
     LHeadInfo.Free;
+    FClient.IgnoreCacheExpiration := False;
   end;
 end;
 
@@ -187,35 +267,55 @@ begin
   inherited;
 end;
 
+function ExtractAndDeleteArchive(const AArchive: string; ARootDir: string): string;
+var
+  LFolder: string;
+  LDirs: TStringDynArray;
+begin
+  Result := '';
+  LFolder := TPath.Combine(ARootDir, TGuid.NewGuid.ToString);
+  if ForceDirectories(LFolder) and ShellUnzip(AArchive, LFolder) then
+  begin
+    LDirs := TDirectory.GetDirectories(LFolder);
+    if Length(LDirs) = 1 then
+      Result := LDirs[0];
+  end;
+  TFile.Delete(AArchive);
+end;
+
 function TDNGitHubPackageProvider.Download(const APackage: IDNPackage;
   const AVersion: string; const AFolder: string; out AContentFolder: string): Boolean;
 var
-  LArchiveFile, LFolder: string;
-  LDirs: TStringDynArray;
+  LArchiveFile, LProviderFolder, LVersion, LProviderUrl: string;
+  LGithubPackage: TDNGitHubPackage;
 const
   CNamePrefix = 'filename=';
 begin
   FProgress.SetTasks(['Downloading']);
   LArchiveFile := TPath.Combine(AFolder, 'Package.zip');
   FClient.OnProgress := HandleDownloadProgress;
-  Result := FClient.Download(APackage.DownloadLoaction + IfThen(AVersion <> '', AVersion, (APackage as TDNGitHubPackage).DefaultBranch), LArchiveFile) = HTTPErrorOk;
+  LVersion := IfThen(AVersion <> '', AVersion, (APackage as TDNGitHubPackage).DefaultBranch);
+  Result := FClient.Download(APackage.DownloadLoaction + LVersion, LArchiveFile) = HTTPErrorOk;
+  if Result then
+  begin
+    AContentFolder := ExtractAndDeleteArchive(LArchiveFile, AFolder);
+    if APackage is TDNGitHubPackage then
+    begin
+      LGithubPackage := APackage as TDNGitHubPackage;
+      if LGithubPackage.RepositoryType <> '' then
+      begin
+        LProviderUrl := GetRepositoryDownloadUrl(LGithubPackage.RepositoryType, LGithubPackage.RepositoryUser, LGithubPackage.Repository, LVersion);
+        Result := FClient.Download(LProviderUrl, LArchiveFile) = HTTPErrorOk;
+        if Result then
+        begin
+          LProviderFolder := ExtractAndDeleteArchive(LArchiveFile, AFolder);
+          TDirectory.Copy(AContentFolder, LProviderFolder);
+          AContentFolder := LProviderFolder;
+        end;
+      end;
+    end;
+  end;
   FClient.OnProgress := nil;
-  if Result then
-  begin
-    LFolder := TPath.Combine(AFolder, TGuid.NewGuid.ToString);
-    Result := ForceDirectories(LFolder);
-    if Result then
-      Result := ShellUnzip(LArchiveFile, LFolder);
-  end;
-
-  if Result then
-  begin
-    LDirs := TDirectory.GetDirectories(LFolder);
-    Result := Length(LDirs) = 1;
-    if Result then
-      AContentFolder := LDirs[0];
-  end;
-  TFile.Delete(LArchiveFile);
 end;
 
 function TDNGitHubPackageProvider.LoadVersionInfo(
@@ -244,6 +344,7 @@ begin
           LVersion.Name := LVersionName;
           LVersion.CompilerMin := LInfo.CompilerMin;
           LVersion.CompilerMax := LInfo.CompilerMax;
+          AddDependencies(LVersion, LInfo);
           APackage.Versions.Add(LVersion);
         end;
         if SameText(AFirstVersion, LVersionName) then
@@ -257,23 +358,40 @@ begin
   end;
 end;
 
+function TDNGitHubPackageProvider.GetBitbucketFileText(const AAuthor,
+  ARepository, AVersion, AFilePath: string; out AText: string): Boolean;
+begin
+  FClient.Accept := CMediaTypeRaw;
+  try
+    Result := FClient.GetText(Format(CBitbucketFileContent, [AAuthor, ARepository, AVersion, AFilePath]), AText) = HTTPErrorOk;
+    if not Result then
+      CheckRateLimit();
+  finally
+    FClient.Accept := '';
+  end;
+end;
+
 function TDNGitHubPackageProvider.GetFileStream(const AAuthor, ARepository,
   AVersion, AFilePath: string; AFile: TStream): Boolean;
 begin
   FClient.Accept := CMediaTypeRaw;
   try
     Result := FClient.Get(Format(CGithubFileContent, [AAuthor, ARepository, AFilePath, AVersion]), AFile) = HTTPErrorOk;
+    if not Result then
+      CheckRateLimit();
   finally
     FClient.Accept := '';
   end;
 end;
 
-function TDNGitHubPackageProvider.GetFileText(const AAuthor, ARepository,
+function TDNGitHubPackageProvider.GetGithubFileText(const AAuthor, ARepository,
   AVersion, AFilePath: string; out AText: string): Boolean;
 begin
   FClient.Accept := CMediaTypeRaw;
   try
     Result := FClient.GetText(Format(CGithubFileContent, [AAuthor, ARepository, AFilePath, AVersion]), AText) = HTTPErrorOk;
+    if not Result then
+      CheckRateLimit();
   finally
     FClient.Accept := '';
   end;
@@ -286,20 +404,26 @@ var
 begin
   FClient.Accept := CMediaTypeRaw;
   try
-    Result := GetFileText(AAuthor, ARepository, AVersion, CInfoFile, LResponse)
+    Result := GetGithubFileText(AAuthor, ARepository, AVersion, CInfoFile, LResponse)
       and AInfo.LoadFromString(LResponse);
+    if not Result then
+      CheckRateLimit();
   finally
     FClient.Accept := '';
   end;
 end;
 
 function TDNGitHubPackageProvider.GetLicense(
-  const APackage: TDNGitHubPackage): string;
+  const APackage: TDNGitHubPackage; const ALicense: TDNLicense): string;
+var
+  LHasExternalLicense: Boolean;
 begin
-  Result := '';
-  if (APackage.LicenseType <> '') then
+  Result := 'No Licensefile has been provided.' + sLineBreak + 'Contact the Packageauthor to fix this issue by using the report-button.';
+  if (ALicense.LicenseFile <> '') then
   begin
-    if GetFileText(APackage.Author, APackage.RepositoryName, APackage.DefaultBranch, APackage.LicenseFile, Result) then
+    LHasExternalLicense := (SameText(APackage.RepositoryType, CBitbucket) and GetBitbucketFileText(APackage.RepositoryUser, APackage.Repository, APackage.DefaultBranch, ALicense.LicenseFile, Result))
+      or (SameText(APackage.RepositoryType, CGithup) and GetGithubFileText(APackage.RepositoryUser, APackage.Repository, APackage.DefaultBranch, ALicense.LicenseFile, Result));
+    if LHasExternalLicense or GetGithubFileText(APackage.Author, APackage.RepositoryName, APackage.DefaultBranch, ALicense.LicenseFile, Result) then
     begin
       //if we do not detect a single Windows-Linebreak, we assume Posix-LineBreaks and convert
       if not ContainsStr(Result, sLineBreak) then
@@ -307,9 +431,40 @@ begin
     end
     else
     begin
-      Result := 'An error occured while doanloading the license information';
+      Result := 'An error occured while downloading the license information.' + sLineBreak + 'The file might be missing.';
     end;
   end;
+end;
+
+function TDNGitHubPackageProvider.GetRepositoryDownloadUrl(const AName, AUser,
+  ARepo, AVersion: string): string;
+begin
+  if SameText(CBitbucket, AName) then
+    Exit(Format(CBitbucketDownloadUrl, [AUser, ARepo, AVersion]))
+  else if SameText(CGithup, AName) then
+    Exit(Format(CGithubDownloadUrl, [AUser, ARepo, AVersion]));
+  raise EInvalidProviderSetup.Create('Unknown Provider ' + AName);
+end;
+
+function TDNGitHubPackageProvider.GetRepositoryIssueUrl(const AName, AUser,
+  ARepo: string): string;
+begin
+  Result := '';
+  if SameText(AName, CBitbucket) then
+    Result := Format(CBitbucketIssueUrl, [AUser, ARepo])
+  else if SameText(AName, CGithup) then
+    Result := Format(CGithubIssueUrl, [AUser, ARepo]);
+end;
+
+function TDNGitHubPackageProvider.GetProjectUrl(const AName, AUser,
+  ARepo: string): string;
+begin
+  if SameText(AName, CBitbucket) then
+    Result := Format(CBitbucketProjectUrl, [AUser, ARepo])
+  else if SameText(AName, CGithup) then
+    Result := Format(CGithup, [AUser, ARepo])
+  else
+    Result := '';
 end;
 
 function TDNGitHubPackageProvider.GetPushDateFile: string;
@@ -321,6 +476,8 @@ function TDNGitHubPackageProvider.GetReleaseText(const AAuthor,
   ARepository: string; out AReleases: string): Boolean;
 begin
   Result := FClient.GetText(Format(CGithubRepoReleases, [AAuthor, ARepository]), AReleases) = HTTPErrorOk;
+  if not Result then
+    CheckRateLimit();
 end;
 
 function TDNGitHubPackageProvider.GetRepoList(out ARepos: TJSONArray): Boolean;
@@ -349,56 +506,20 @@ end;
 
 procedure TDNGitHubPackageProvider.LoadPicture(APicture: TPicture; AAuthor, ARepository, AVersion, APictureFile: string);
 var
-  LGraphic: TGraphic;
-  LResStream: TResourceStream;
-  LIsValid: Boolean;
   LPicStream: TMemoryStream;
   LPictureFile: string;
 begin
-  LIsValid := False;
-  LGraphic := nil;
-
   LPicStream := TMemoryStream.Create();
   try
     LPictureFile := StringReplace(APictureFile, '\', '/', [rfReplaceAll]);
     if GetFileStream(AAuthor, ARepository, AVersion, LPictureFile, LPicStream) then
     begin
-      case AnsiIndexText(ExtractFileExt(APictureFile), ['.png', '.jpg', '.jpeg']) of
-        0: LGraphic := TPngImage.Create();
-        1, 2: LGraphic := TJPEGImage.Create();
-      end;
-
-      if Assigned(LGraphic) then
-      begin
-        try
-          LPicStream.Position := 0;
-          LGraphic.LoadFromStream(LPicStream);
-          LIsValid := True;
-        except
-          on E: EInvalidGraphic do
-            FreeAndNil(LGraphic);
-        end;
-      end;
-    end;  
+      LPicStream.Position := 0;
+      TGraphicLoader.TryLoadPictureFromStream(LPicStream, ExtractFileExt(LPictureFile), APicture);
+    end;
   finally
     LPicStream.Free;
   end;
-
-  if not LIsValid then
-  begin
-    LResStream := TResourceStream.Create(HInstance, Png_Package, RT_RCDATA);
-    try
-      LGraphic := TPngImage.Create();
-      LGraphic.LoadFromStream(LResStream);
-    finally
-      LResStream.Free;
-    end;
-  end;
-
-  APicture.Assign(LGraphic);
-
-  if Assigned(LGraphic) then
-    LGraphic.Free;
 end;
 
 procedure TDNGitHubPackageProvider.LoadPushDates;
@@ -407,6 +528,7 @@ var
   i: Integer;
 begin
   FDateMutex.Acquire();
+  FPushDates.Clear;
 
   if not TFile.Exists(GetPushDateFile()) then
     Exit;
@@ -428,33 +550,39 @@ var
   i: Integer;
 begin
   Result := False;
-  FProgress.SetTasks(['Reolading']);
   try
-    LoadPushDates();
-    FClient.BeginWork();
+    (FState as TDNGithubPackageProviderState).Reset();
+    FProgress.SetTasks(['Reolading']);
     try
-      if GetRepoList(LRepos) then
-      begin
-        try
-          Packages.Clear();
-          FExistingIDs.Clear();
-          for i := 0 to LRepos.Count - 1 do
-          begin
-            LRepo := LRepos.Items[i] as TJSONObject;
-            FProgress.SetTaskProgress(LRepo.GetValue('name').Value, i, LRepos.Count);
-            AddPackageFromJSon(LRepo);
+      LoadPushDates();
+      FClient.BeginWork();
+      try
+        if GetRepoList(LRepos) then
+        begin
+          try
+            Packages.Clear();
+            FExistingIDs.Clear();
+            for i := 0 to LRepos.Count - 1 do
+            begin
+              LRepo := LRepos.Items[i] as TJSONObject;
+              FProgress.SetTaskProgress(LRepo.GetValue('name').Value, i, LRepos.Count);
+              AddPackageFromJSon(LRepo);
+            end;
+            FProgress.Completed();
+            Result := True;
+          finally
+            LRepos.Free;
           end;
-          FProgress.Completed();
-          Result := True;
-        finally
-          LRepos.Free;
         end;
+      finally
+        FClient.EndWork();
       end;
     finally
-      FClient.EndWork();
+      SavePushDates();
     end;
-  finally
-    SavePushDates();
+  except
+    on E: ERateLimitException do
+      (FState as TDNGithubPackageProviderState).SetError(E.Message)
   end;
 end;
 

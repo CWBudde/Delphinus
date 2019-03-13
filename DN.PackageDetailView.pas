@@ -17,7 +17,7 @@ uses
   DN.Controls,
   DN.Version,
   Delphinus.Forms,
-  ImgList;
+  ImgList, System.ImageList;
 
 type
   TGetPackageVersion = function(const APackage: IDNPackage): TDNVersion of object;
@@ -54,6 +54,7 @@ type
     FPackage: IDNPackage;
     FOnGetInstalledVersion: TGetPackageVersion;
     FOnGetOnlineVersion: TGetPackageVersion;
+    FDummyPic: TGraphic;
     procedure LoadIcons;
     procedure SetPackage(const Value: IDNPackage);
     function GetInstalledVersion(const APackage: IDNPackage): TDNVersion;
@@ -65,6 +66,7 @@ type
     { Public declarations }
     constructor Create(AOwner: TComponent); override;
     destructor Destroy(); override;
+    property DummyPic: TGraphic read FDummyPic write FDummyPic;
     property Package: IDNPackage read FPackage write SetPackage;
     property OnGetInstalledVersion: TGetPackageVersion read FOnGetInstalledVersion write FOnGetInstalledVersion;
     property OnGetOnlineVersion: TGetPackageVersion read FOnGetOnlineVersion write FOnGetOnlineVersion;
@@ -77,63 +79,10 @@ uses
   Delphinus.Resources.Names,
   Delphinus.Resources,
   ShellAPi,
-  DN.Compiler.Intf;
+  DN.Compiler.Intf,
+  DN.Utils;
 
 {$R *.dfm}
-
-const
-  CDelphiNames: array[9..31] of string =
-  ('2', '3', '3', '4', '5', '6', '7', '8', '2005', '2006', '2007', '2009', '2010',
-   'XE', 'XE2', 'XE3', 'XE4', 'XE5', 'XE6', 'XE7', 'XE8', 'Seattle', 'Berlin');
-
-  function GetDelphiName(const ACompilerVersion: TCompilerVersion): string;
-  var
-    LVersion: Integer;
-  begin
-    LVersion := Trunc(ACompilerVersion);
-    if (LVersion >= Low(CDelphiNames)) and (LVersion <= High(CDelphiNames)) then
-    begin
-      Result := CDelphiNames[LVersion];
-    end
-    else
-    begin
-      Result := 'Compiler ' + IntToStr(LVersion);
-    end;
-  end;
-
-  function GenerateSupportsString(const AMin, AMax: TCompilerVersion): string;
-  begin
-    if AMin > 0 then
-    begin
-      if (AMax - AMin) =  0 then
-        Result := 'Delphi ' + GetDelphiName(AMin)
-      else if (AMax < AMin) then
-        Result := 'Delphi ' + GetDelphiName(AMin) + ' and newer'
-      else
-        Result := 'Delphi ' + GetDelphiName(AMin) + ' to ' + GetDelphiName(AMax);
-    end
-    else
-    begin
-      Result := 'Unspecified';
-    end;
-  end;
-
-  function GeneratePlatformString(APlatforms: TDNCompilerPlatforms): string;
-  var
-    LPlatform: TDNCompilerPlatform;
-    LRequiresSeperator: Boolean;
-  begin
-    Result := '';
-    LRequiresSeperator := False;
-    for LPlatform in APlatforms do
-    begin
-      if LRequiresSeperator then
-        Result := Result + ', ';
-
-      Result := Result + TDNCompilerPlatformName[LPlatform];
-      LRequiresSeperator := True;
-    end;
-  end;
 
 { TFrame1 }
 
@@ -212,8 +161,8 @@ begin
   btnLicense.DisabledImageIndex := AddIconToImageList(ilButtons, Ico_Agreement_Disabled);
   btnHome.ImageIndex := AddIconToImageList(ilButtons, Ico_Home);
   btnHome.DisabledImageIndex := AddIconToImageList(ilButtons, Ico_Home_Disabled);
-  btnProject.ImageIndex := AddIconToImageList(ilButtons, Ico_Github);
-  btnProject.DisabledImageIndex := AddIconToImageList(ilButtons, Ico_Github_Disabled);
+  btnProject.ImageIndex := AddIconToImageList(ilButtons, Ico_Repo);
+  btnProject.DisabledImageIndex := AddIconToImageList(ilButtons, Ico_Repo_Disabled);
   btnReport.ImageIndex := AddIconToImageList(ilButtons, Ico_Bug);
   btnReport.DisabledImageIndex := AddIconToImageList(ilButtons, Ico_Bug_Disabled);
 end;
@@ -231,8 +180,12 @@ begin
     lbAuthor.Caption := FPackage.Author;
     lbDescription.Caption := FPackage.Description;
     lbSupports.Caption := GenerateSupportsString(FPackage.CompilerMin, FPackage.CompilerMax);
-    imgRepo.Picture := FPackage.Picture;
-    lbLicense.Caption := FPackage.LicenseType;
+    if Assigned(FPackage.Picture.Graphic) then
+      imgRepo.Picture := FPackage.Picture
+    else
+      imgRepo.Picture.Graphic := FDummyPic;
+
+    lbLicense.Caption := FPackage.LicenseTypes;
     lbVersion.Caption := GetOnlineVersion(FPackage).ToString;
     lbInstalled.Caption := GetInstalledVersion(FPackage).ToString;
     lbPlatforms.Caption := GeneratePlatformString(FPackage.Platforms);
@@ -255,6 +208,7 @@ begin
     btnProject.Enabled := False;
     btnReport.Enabled := False;
   end;
+
   btnLicense.Enabled := lbLicense.Caption <> '';
 end;
 

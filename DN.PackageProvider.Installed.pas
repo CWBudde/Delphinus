@@ -14,14 +14,14 @@ uses
   Types,
   SysUtils,
   DN.PackageProvider,
-  DN.Package.Intf;
+  DN.Package.Intf,
+  DN.Package.DirectoryLoader.Intf;
 
 type
   TDNInstalledPackageProvider = class(TDNPackageProvider)
   private
     FComponentDirectory: string;
-    function LoadLicenceText(const AFile: string): string;
-    procedure LoadDetails(const APackage: IDNPackage; const AInfoFile: string);
+    FLoader: IDNPackageDirectoryLoader;
   public
     constructor Create(const AComponentDirectory: string);
     function Reload: Boolean; override;
@@ -31,14 +31,15 @@ implementation
 
 uses
   IOUtils,
-  jpeg,
-  pngimage,
+  Graphics,
   DN.Types,
   DN.Package,
   DN.Uninstaller.Intf,
   DN.JSonFile.InstalledInfo,
   DN.Package.Version,
-  DN.Package.Version.Intf;
+  DN.Package.Version.Intf,
+  DN.Graphics.Loader,
+  DN.Package.DirectoryLoader;
 
 { TDNInstalledPackageProvider }
 
@@ -47,94 +48,7 @@ constructor TDNInstalledPackageProvider.Create(
 begin
   inherited Create();
   FComponentDirectory := AComponentDirectory;
-end;
-
-procedure TDNInstalledPackageProvider.LoadDetails(const APackage: IDNPackage;
-  const AInfoFile: string);
-var
-  LJPG: TJPEGImage;
-  LPNG: TPNGImage;
-  LImageFile: string;
-  LInfo: TInstalledInfoFile;
-  LVersion: IDNPackageVersion;
-begin
-  if TFile.Exists(AInfoFile) then
-  begin
-    LInfo := TInstalledInfoFile.Create();
-    try
-      if LInfo.LoadFromFile(AInfoFile) then
-      begin
-        APackage.Author := LInfo.Author;
-        APackage.Description := LInfo.Description;
-        APackage.ID := LInfo.ID;
-        APackage.CompilerMin := LInfo.CompilerMin;
-        APackage.CompilerMax := LInfo.CompilerMax;
-        APackage.Platforms := LInfo.Platforms;
-        APackage.LicenseType := LInfo.LicenseType;
-        APackage.LicenseText := LoadLicenceText(TPath.Combine(FComponentDirectory, LInfo.LicenseFile));
-        APackage.ProjectUrl := LInfo.ProjectUrl;
-        APackage.HomepageUrl := LInfo.HomepageUrl;
-        APackage.ReportUrl := LInfo.ReportUrl;
-        if LInfo.Version <> '' then
-        begin
-          LVersion := TDNPackageVersion.Create();
-          if LInfo.Version <> '' then
-            LVersion.Name := LInfo.Version;
-
-          LVersion.CompilerMin := LInfo.CompilerMin;
-          LVersion.CompilerMax := LInfo.CompilerMax;
-          APackage.Versions.Add(LVersion);
-        end;
-        if LInfo.Picture <> '' then
-        begin
-          LImageFile := TPath.Combine(ExtractFilePath(AInfoFile), LInfo.Picture);
-          if TFile.Exists(LImageFile) then
-          begin
-            if LowerCase(ExtractFileExt(LImageFile)) = '.png' then
-            begin
-              LPNG := TPNGImage.Create();
-              try
-                LPNG.LoadFromFile(LImageFile);
-                APackage.Picture.Graphic := LPNG;
-              finally
-                LPNG.Free;
-              end;
-            end
-            else
-            begin
-              LJPG := TJPEGImage.Create();
-              try
-                LJPG.LoadFromFile(LImageFile);
-                APackage.Picture.Graphic := LJPG;
-              finally
-                LJPG.Free;
-              end;
-            end;
-          end;
-        end;
-      end;
-    finally
-      LInfo.Free;
-    end;
-  end;
-end;
-
-function TDNInstalledPackageProvider.LoadLicenceText(
-  const AFile: string): string;
-var
-  LFile: TStringStream;
-begin
-  Result := '';
-  if TFile.Exists(AFile) then
-  begin
-    LFile := TStringStream.Create();
-    try
-      LFile.LoadFromFile(AFile);
-      Result := LFile.DataString;
-    finally
-      LFile.Free;
-    end;
-  end;
+  FLoader := TDNPackageDirectoryLoader.Create();
 end;
 
 function TDNInstalledPackageProvider.Reload: Boolean;
@@ -156,8 +70,7 @@ begin
         and (Pos('~', ExtractFileName(ExcludeTrailingPathDelimiter(LDirectory))) < 1) then
       begin
         LPackage := TDNPackage.Create();
-        LPackage.Name := ExtractFileName(LDirectory);
-        LoadDetails(LPackage, TPath.Combine(LDirectory, CInfoFile));
+        FLoader.Load(LDirectory, LPackage);
         Packages.Add(LPackage);
       end;
     end;

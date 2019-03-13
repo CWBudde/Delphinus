@@ -10,6 +10,7 @@ unit DN.JSonFile.InstalledInfo;
 interface
 
 uses
+  DN.Version,
   DN.JSon,
   DN.JSonFile.Info;
 
@@ -17,10 +18,9 @@ type
   TInstalledInfoFile = class(TInfoFile)
   private
     FDescription: string;
-    FVersion: string;
+    FVersion: TDNVersion;
     FAuthor: string;
     FProjectUrl: string;
-    FReportUrl: string;
     FHomepageUrl: string;
   protected
     procedure Load(const ARoot: TJSONObject); override;
@@ -28,10 +28,9 @@ type
   public
     property Author: string read FAuthor write FAuthor;
     property Description: string read FDescription write FDescription;
-    property Version: string read FVersion write FVersion;
+    property Version: TDNVersion read FVersion write FVersion;
     property ProjectUrl: string read FProjectUrl write FProjectUrl;
     property HomepageUrl: string read FHomepageUrl write FHomepageUrl;
-    property ReportUrl: string read FReportUrl write FReportUrl;
   end;
 
 implementation
@@ -43,10 +42,10 @@ begin
   inherited;
   FAuthor := ReadString(ARoot, 'author');
   FDescription := ReadString(ARoot, 'description');
-  FVersion := ReadString(ARoot, 'version');
+  if not TDNVersion.TryParse(ReadString(ARoot, 'version'), FVersion) then
+    FVersion := TDNVersion.Create();
   FProjectUrl := ReadString(ARoot, 'project_url');
   FHomepageUrl := ReadString(ARoot, 'homepage_url');
-  FReportUrl := ReadString(ARoot, 'report_url');
 end;
 
 procedure TInstalledInfoFile.Save(const ARoot: TJSONObject);
@@ -54,10 +53,9 @@ begin
   inherited;
   WriteString(ARoot, 'author', FAuthor);
   WriteString(ARoot, 'description', FDescription);
-  WriteString(ARoot, 'version', FVersion);
+  WriteString(ARoot, 'version', FVersion.ToString);
   WriteString(ARoot, 'project_url', FProjectUrl);
   WriteString(ARoot, 'homepage_url', FHomepageUrl);
-  WriteString(ARoot, 'report_url', FReportUrl);
 end;
 
 end.
